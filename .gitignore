@@ -1,0 +1,34 @@
+# Credentials — never commit these
+.env
+.env.local
+.env.production
+.env.development
+
+# .env.example is safe to commit — it contains no real secrets
+
+
+# Model weights — too large for GitHub; stored in Supabase Storage instead
+models/*.pt
+
+# Training data photos — large dataset, not for public repo
+training_data/
+
+# Old SQLite catalogue — replaced by Supabase
+catalogue/
+
+# Temporary upload staging
+uploads/
+
+# TDP-specific data preparation scripts — not useful to the public
+scripts/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store

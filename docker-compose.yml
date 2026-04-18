@@ -1,0 +1,27 @@
+services:
+  finfinder:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Cache the downloaded model weights across restarts
+      - ./models:/app/models
+    environment:
+      - MODEL_PATH=/app/models/fin_embedder.pt
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    restart: unless-stopped
+
+  # Optional: run training as a one-off service
+  # docker compose run --rm trainer --data-dir /data --epochs 50
+  trainer:
+    build: .
+    volumes:
+      - ./models:/app/models
+      - ./data:/data
+    environment:
+      - MODEL_PATH=/app/models/fin_embedder.pt
+    entrypoint: ["python", "-m", "app.training.train"]
+    command: ["--data-dir", "/data", "--output", "/app/models/fin_embedder.pt"]
+    profiles:
+      - training

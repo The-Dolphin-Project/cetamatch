@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>finFindR</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2e3244;
+      --accent:  #4f8ef7;
+      --accent2: #34d399;
+      --danger:  #f87171;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --radius:  8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+    header span { font-size: 12px; color: var(--muted); }
+
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); margin-left: auto;
+      transition: background .3s;
+    }
+    #status-dot.ok  { background: var(--accent2); }
+    #status-dot.err { background: var(--danger); }
+    #status-label { font-size: 12px; color: var(--muted); }
+
+    nav {
+      display: flex;
+      gap: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+    nav button {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 10px 16px;
+      transition: color .15s, border-color .15s;
+    }
+    nav button.active, nav button:hover { color: var(--text); }
+    nav button.active { border-bottom-color: var(--accent); color: var(--accent); }
+
+    main { max-width: 860px; margin: 32px auto; padding: 0 24px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+    .tab { display: none; }
+    .tab.active { display: block; }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 36px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(79,142,247,.05);
+    }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .drop-zone p { color: var(--muted); font-size: 13px; }
+    .drop-zone strong { color: var(--text); }
+    #identify-preview, #add-preview {
+      max-height: 180px; border-radius: 6px; margin-top: 12px;
+      display: none; object-fit: contain;
+    }
+
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; margin-top: 12px; }
+    input[type=text], input[type=number] {
+      width: 100%; padding: 8px 10px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      font-size: 13px; outline: none;
+      transition: border-color .15s;
+    }
+    input[type=text]:focus, input[type=number]:focus { border-color: var(--accent); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: var(--radius);
+      cursor: pointer; font-size: 13px; font-weight: 600;
+      padding: 8px 18px; margin-top: 14px;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn.danger { background: var(--danger); }
+    .btn.ghost {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text); font-weight: 400;
+    }
+    .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    .spinner {
+      width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .6s linear infinite; display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Result / error banners */
+    .result-box {
+      margin-top: 20px; border-radius: var(--radius);
+      padding: 16px; display: none;
+    }
+    .result-box.error { background: rgba(248,113,113,.1); border: 1px solid var(--danger); }
+    .result-box.success { background: rgba(52,211,153,.08); border: 1px solid var(--accent2); }
+
+    /* Match table */
+    .match-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .match-table th, .match-table td {
+      text-align: left; padding: 8px 10px;
+      border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .match-table th { color: var(--muted); font-weight: 500; }
+    .match-table tr:last-child td { border-bottom: none; }
+    .match-table .score { font-variant-numeric: tabular-nums; }
+
+    .score-bar {
+      height: 6px; border-radius: 3px;
+      background: var(--border); overflow: hidden; margin-top: 4px;
+    }
+    .score-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+    /* Catalogue list */
+    .cat-entry {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .cat-entry:last-child { border-bottom: none; }
+    .cat-label { font-weight: 500; flex: 1; }
+    .cat-id { font-size: 11px; color: var(--muted); font-family: monospace; }
+    .cat-hash { font-size: 10px; color: var(--muted); font-family: monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+    .meta-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr));
+      gap: 10px; margin-top: 12px;
+    }
+    .meta-item { background: var(--bg); border-radius: 6px; padding: 10px 12px; }
+    .meta-item .val { font-size: 15px; font-weight: 600; }
+    .meta-item .key { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>finFindR</h1>
+  <span>dorsal fin identification</span>
+  <div id="status-dot" title="API status"></div>
+  <span id="status-label">checking…</span>
+</header>
+
+<nav>
+  <button class="active" data-tab="identify">Identify</button>
+  <button data-tab="add">Add to Catalogue</button>
+  <button data-tab="catalogue">Catalogue</button>
+  <button data-tab="settings" style="margin-left:auto">⚙ Settings</button>
+</nav>
+
+<main>
+
+  <!-- ── IDENTIFY ─────────────────────────────────────────────────────────── -->
+  <div id="tab-identify" class="tab active">
+    <div class="card">
+      <h2>Identify a fin</h2>
+      <div class="drop-zone" id="identify-drop">
+        <input type="file" id="identify-file" accept="image/jpeg,image/png" />
+        <p><strong>Click or drag</strong> a fin photo here</p>
+        <p>JPEG or PNG, max 20 MB</p>
+        <img id="identify-preview" alt="preview" />
+      </div>
+      <label for="identify-topn">Top N matches</label>
+      <input type="number" id="identify-topn" value="5" min="1" max="50" style="width:80px" />
+      <br/>
+      <button class="btn" id="identify-btn">
+        <span class="spinner" id="identify-spinner"></span>
+        Identify
+      </button>
+      <div class="result-box" id="identify-result"></div>
+    </div>
+  </div>
+
+  <!-- ── ADD ──────────────────────────────────────────────────────────────── -->
+  <div id="tab-add" class="tab">
+    <div class="card">
+      <h2>Add fin to catalogue</h2>
+      <div class="drop-zone" id="add-drop">
+        <input type="file" id="add-file" accept="image/jpeg,image/png" />
+        <p><strong>Click or drag</strong> a fin photo here</p>
+        <p>JPEG or PNG, max 20 MB</p>
+        <img id="add-preview" alt="preview" />
+      </div>
+      <label for="add-label">Individual label / name</label>
+      <input type="text" id="add-label" placeholder="e.g. Dolphin-042" />
+      <label for="add-id">Stable ID <span style="color:var(--muted)">(optional — UUID generated if blank)</span></label>
+      <input type="text" id="add-id" placeholder="e.g. fin-042" />
+      <br/>
+      <button class="btn" id="add-btn">
+        <span class="spinner" id="add-spinner"></span>
+        Add to Catalogue
+      </button>
+      <div class="result-box" id="add-result"></div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ─────────────────────────────────────────────────────────── -->
+  <div id="tab-settings" class="tab">
+    <div class="card">
+      <h2>API Key</h2>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+        Enter the API key configured on your finFindR server. It will be saved in your
+        browser and sent as the <code style="font-size:12px;color:var(--accent)">X-API-Key</code>
+        header on every request. Leave blank if your server has no key configured.
+      </p>
+      <label for="settings-key">API Key</label>
+      <input type="password" id="settings-key" placeholder="Paste your API key here" autocomplete="off" />
+      <div style="display:flex;gap:8px;align-items:center;margin-top:14px">
+        <button class="btn" id="settings-save-btn">Save Key</button>
+        <button class="btn ghost" id="settings-clear-btn">Clear</button>
+        <span id="settings-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CATALOGUE ─────────────────────────────────────────────────────────── -->
+  <div id="tab-catalogue" class="tab">
+    <div class="card" style="display:flex;align-items:center;gap:12px;padding:16px 24px;">
+      <div style="flex:1">
+        <span id="cat-count" style="font-size:22px;font-weight:700">—</span>
+        <span style="color:var(--muted);margin-left:6px;font-size:13px">entries</span>
+      </div>
+      <button class="btn ghost" id="cat-refresh-btn">Refresh</button>
+    </div>
+    <div class="card" id="cat-list-card">
+      <div class="empty" id="cat-empty">Loading…</div>
+      <div id="cat-list"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const BASE = '';   // same origin
+
+  // ── API key helpers ────────────────────────────────────────────────────────
+  const KEY_STORAGE = 'finfinder_api_key';
+
+  function getApiKey() { return localStorage.getItem(KEY_STORAGE) || ''; }
+
+  function authHeaders() {
+    const k = getApiKey();
+    return k ? { 'X-API-Key': k } : {};
+  }
+
+  // ── Settings tab ───────────────────────────────────────────────────────────
+  const settingsInput  = document.getElementById('settings-key');
+  const settingsStatus = document.getElementById('settings-status');
+
+  // Pre-fill input with stored key on load
+  settingsInput.value = getApiKey();
+
+  document.getElementById('settings-save-btn').addEventListener('click', () => {
+    const key = settingsInput.value.trim();
+    if (key) {
+      localStorage.setItem(KEY_STORAGE, key);
+      settingsStatus.textContent = 'Key saved.';
+      settingsStatus.style.color = 'var(--accent2)';
+    } else {
+      localStorage.removeItem(KEY_STORAGE);
+      settingsStatus.textContent = 'Key cleared.';
+      settingsStatus.style.color = 'var(--muted)';
+    }
+    setTimeout(() => { settingsStatus.textContent = ''; }, 2500);
+    pollHealth();
+  });
+
+  document.getElementById('settings-clear-btn').addEventListener('click', () => {
+    settingsInput.value = '';
+    localStorage.removeItem(KEY_STORAGE);
+    settingsStatus.textContent = 'Key cleared.';
+    settingsStatus.style.color = 'var(--muted)';
+    setTimeout(() => { settingsStatus.textContent = ''; }, 2500);
+    pollHealth();
+  });
+
+  // ── Health polling ─────────────────────────────────────────────────────────
+  const dot   = document.getElementById('status-dot');
+  const lbl   = document.getElementById('status-label');
+
+  async function pollHealth() {
+    try {
+      const r = await fetch(`${BASE}/health`);
+      const d = await r.json();
+      dot.className = 'ok';
+      lbl.textContent = `OK · ${d.catalogue_size} in catalogue`;
+    } catch {
+      dot.className = 'err';
+      lbl.textContent = 'unreachable';
+    }
+  }
+  pollHealth();
+  setInterval(pollHealth, 15_000);
+
+  // ── Tab navigation ─────────────────────────────────────────────────────────
+  document.querySelectorAll('nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+      if (btn.dataset.tab === 'catalogue') loadCatalogue();
+    });
+  });
+
+  // ── Drop zone helper ───────────────────────────────────────────────────────
+  function setupDrop(zoneId, inputId, previewId) {
+    const zone    = document.getElementById(zoneId);
+    const input   = document.getElementById(inputId);
+    const preview = document.getElementById(previewId);
+
+    function showPreview(file) {
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+      preview.style.display = 'block';
+    }
+
+    input.addEventListener('change', () => showPreview(input.files[0]));
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        showPreview(file);
+      }
+    });
+  }
+
+  setupDrop('identify-drop', 'identify-file', 'identify-preview');
+  setupDrop('add-drop',      'add-file',      'add-preview');
+
+  // ── Result helpers ─────────────────────────────────────────────────────────
+  function showResult(boxId, html, isError = false) {
+    const box = document.getElementById(boxId);
+    box.className = `result-box ${isError ? 'error' : 'success'}`;
+    box.innerHTML = html;
+    box.style.display = 'block';
+  }
+  function hideResult(boxId) {
+    document.getElementById(boxId).style.display = 'none';
+  }
+  function setLoading(btnId, spinnerId, loading) {
+    document.getElementById(btnId).disabled = loading;
+    document.getElementById(spinnerId).style.display = loading ? 'inline-block' : 'none';
+  }
+
+  // ── IDENTIFY ───────────────────────────────────────────────────────────────
+  document.getElementById('identify-btn').addEventListener('click', async () => {
+    const file  = document.getElementById('identify-file').files[0];
+    const topN  = document.getElementById('identify-topn').value;
+    if (!file) { showResult('identify-result', 'Please select an image first.', true); return; }
+
+    setLoading('identify-btn', 'identify-spinner', true);
+    hideResult('identify-result');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`${BASE}/identify?top_n=${encodeURIComponent(topN)}`, { method: 'POST', headers: authHeaders(), body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+
+      let html = `<div class="meta-grid">
+        <div class="meta-item"><div class="val">${d.matches.length}</div><div class="key">matches</div></div>
+        <div class="meta-item"><div class="val">${d.image_shape ? d.image_shape.join('×') : '—'}</div><div class="key">image shape</div></div>
+      </div>`;
+
+      if (d.matches.length === 0) {
+        html += '<p style="color:var(--muted);margin-top:14px">No catalogue entries to match against. Add fins first.</p>';
+      } else {
+        html += `<table class="match-table">
+          <thead><tr><th>#</th><th>Label</th><th>ID</th><th>Distance</th></tr></thead>
+          <tbody>`;
+        d.matches.forEach((m, i) => {
+          const pct = Math.max(0, Math.min(100, (1 - m.distance) * 100));
+          html += `<tr>
+            <td>${i + 1}</td>
+            <td>${esc(m.label)}</td>
+            <td style="font-family:monospace;font-size:11px">${esc(m.id)}</td>
+            <td class="score">
+              ${(m.distance ?? 0).toFixed(4)}
+              <div class="score-bar"><div class="score-bar-fill" style="width:${pct}%"></div></div>
+            </td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+      }
+
+      showResult('identify-result', html);
+    } catch (e) {
+      showResult('identify-result', `Error: ${esc(e.message)}`, true);
+    } finally {
+      setLoading('identify-btn', 'identify-spinner', false);
+    }
+  });
+
+  // ── ADD ────────────────────────────────────────────────────────────────────
+  document.getElementById('add-btn').addEventListener('click', async () => {
+    const file  = document.getElementById('add-file').files[0];
+    const label = document.getElementById('add-label').value.trim();
+    const finId = document.getElementById('add-id').value.trim();
+    if (!file)  { showResult('add-result', 'Please select an image.', true); return; }
+    if (!label) { showResult('add-result', 'Label is required.', true); return; }
+
+    setLoading('add-btn', 'add-spinner', true);
+    hideResult('add-result');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('label', label);
+      if (finId) fd.append('fin_id', finId);
+
+      const r = await fetch(`${BASE}/catalogue/add`, { method: 'POST', headers: authHeaders(), body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+
+      showResult('add-result', `
+        <strong style="color:var(--accent2)">Added successfully</strong>
+        <div class="meta-grid" style="margin-top:10px">
+          <div class="meta-item"><div class="val">${esc(d.label)}</div><div class="key">label</div></div>
+          <div class="meta-item"><div class="val">${esc(d.id)}</div><div class="key" style="font-family:monospace">id</div></div>
+          <div class="meta-item"><div class="val">${d.catalogue_size}</div><div class="key">catalogue size</div></div>
+        </div>`);
+      pollHealth();
+    } catch (e) {
+      showResult('add-result', `Error: ${esc(e.message)}`, true);
+    } finally {
+      setLoading('add-btn', 'add-spinner', false);
+    }
+  });
+
+  // ── CATALOGUE ──────────────────────────────────────────────────────────────
+  async function loadCatalogue() {
+    document.getElementById('cat-empty').textContent = 'Loading…';
+    document.getElementById('cat-list').innerHTML = '';
+    try {
+      const r = await fetch(`${BASE}/catalogue?limit=200`, { headers: authHeaders() });
+      const d = await r.json();
+      document.getElementById('cat-count').textContent = d.total;
+
+      const list = document.getElementById('cat-list');
+      const empty = document.getElementById('cat-empty');
+
+      if (d.entries.length === 0) {
+        empty.textContent = 'No fins in the catalogue yet.';
+        return;
+      }
+      empty.style.display = 'none';
+
+      d.entries.forEach(e => {
+        const row = document.createElement('div');
+        row.className = 'cat-entry';
+        row.id = `cat-${e.id}`;
+        row.innerHTML = `
+          <div style="flex:1">
+            <div class="cat-label">${esc(e.label)}</div>
+            <div class="cat-id">${esc(e.id)}</div>
+          </div>
+          <button class="btn danger" style="padding:5px 10px;font-size:12px;margin-top:0" onclick="deleteFin('${esc(e.id)}')">Remove</button>`;
+        list.appendChild(row);
+      });
+    } catch (err) {
+      document.getElementById('cat-empty').textContent = `Error loading catalogue: ${err.message}`;
+    }
+  }
+
+  async function deleteFin(id) {
+    if (!confirm(`Remove fin "${id}" from the catalogue?`)) return;
+    try {
+      const r = await fetch(`${BASE}/catalogue/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || r.statusText); }
+      document.getElementById(`cat-${id}`)?.remove();
+      const remaining = document.querySelectorAll('.cat-entry').length;
+      document.getElementById('cat-count').textContent = remaining;
+      if (remaining === 0) {
+        document.getElementById('cat-empty').textContent = 'No fins in the catalogue yet.';
+        document.getElementById('cat-empty').style.display = 'block';
+      }
+      pollHealth();
+    } catch (e) {
+      alert(`Delete failed: ${e.message}`);
+    }
+  }
+
+  document.getElementById('cat-refresh-btn').addEventListener('click', loadCatalogue);
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>
