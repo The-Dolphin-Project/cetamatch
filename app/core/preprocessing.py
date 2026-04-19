@@ -36,14 +36,16 @@ def fill_glare(image: np.ndarray, threshold: int = 245, iterations: int = 3) -> 
     for _ in range(iterations):
         if not glare_mask.any():
             break
-        # For each glare pixel, replace with mean of 3×3 non-glare neighbours
+        # For each glare pixel, replace with mean of 3×3 non-glare neighbours.
+        # Pad both the image and the glare mask by 1 so neighbourhood slices
+        # always have shape (3, 3) even at image edges — avoiding the boolean
+        # index dimension mismatch that otherwise occurs at boundary pixels.
         padded = np.pad(result, ((1, 1), (1, 1), (0, 0)) if result.ndim == 3 else ((1, 1), (1, 1)), mode="edge")
+        padded_mask = np.pad(glare_mask, ((1, 1), (1, 1)), mode="constant", constant_values=False)
         ys, xs = np.where(glare_mask)
         for y, x in zip(ys, xs):
             neighbourhood = padded[y : y + 3, x : x + 3]
-            neighbour_mask = ~glare_mask[
-                max(0, y - 1) : y + 2, max(0, x - 1) : x + 2
-            ]
+            neighbour_mask = ~padded_mask[y : y + 3, x : x + 3]
             if neighbour_mask.any():
                 if result.ndim == 3:
                     valid = neighbourhood[neighbour_mask]
