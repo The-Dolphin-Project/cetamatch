@@ -11,19 +11,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies first (layer caching)
+# --- Python dependencies (cached layer) ---
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (includes app/static/)
+# --- Competition weights (cached layer) ---
+# Downloaded from HuggingFace once at build time (~459 MB).
+# This layer is only rebuilt when the URL or pip dependencies change,
+# so day-to-day code deploys reuse it from Docker cache.
+RUN python -c "\
+import urllib.request, pathlib; \
+dest = pathlib.Path('/app/models/efnv1b7_colab216.h5'); \
+dest.parent.mkdir(parents=True, exist_ok=True); \
+url = 'https://huggingface.co/yellowdolphin/happywhale-models/resolve/main/efnv1b7_colab216.h5'; \
+print('Downloading competition weights (~459 MB) ...', flush=True); \
+urllib.request.urlretrieve(url, dest); \
+print(f'Saved  ({dest.stat().st_size // 1_048_576} MB)', flush=True); \
+"
+
+ENV MODEL_PATH=/app/models/efnv1b7_colab216.h5
+
+# --- Application code (rebuilt on every deploy) ---
 COPY app/ ./app/
 
-# Directories that will be mounted as volumes in production
-RUN mkdir -p /app/models /app/catalogue /app/uploads
-
-# Pre-download ResNet50 ImageNet weights at build time so the container
-# starts without needing internet access at runtime
-RUN python -c "from torchvision.models import resnet50, ResNet50_Weights; resnet50(weights=ResNet50_Weights.DEFAULT)"
+RUN mkdir -p /app/uploads
 
 EXPOSE 8000
 

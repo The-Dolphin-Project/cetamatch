@@ -4,6 +4,11 @@ FastAPI application entry point.
 
 from contextlib import asynccontextmanager
 
+# Load .env automatically in local development. In production (Docker / Fly.io)
+# environment variables are injected directly, so this is a no-op there.
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -20,8 +25,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="finFindR",
-    description="Automated dorsal fin identification API — Python port of haimeh/finFindR",
+    title="CetaMatch",
+    description="Automated cetacean dorsal fin identification API",
     version="1.0.0",
     lifespan=lifespan,
 )
