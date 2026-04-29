@@ -1,16 +1,15 @@
-# finFindR
+# CetaMatch
 
-Automated dorsal fin identification as a self-hosted REST API. Upload a photo of a
-dolphin (or other cetacean) dorsal fin and get back the closest matches from a
-labelled catalogue.
+Automated dorsal fin identification as a self-hosted REST API. Upload a photo of a dolphin (or other cetacean) dorsal fin and get back the closest matches from a labelled catalogue.
 
-This project is a port of [haimeh/finFindR](https://github.com/haimeh/finFindR) —
-originally written in R using MXNet — into a modern Python web service. The core
-image processing pipeline (preprocessing, blob detection, Canny edge detection, and
-A\* trailing-edge tracing) is a faithful port of the original C++ and R code. The
-embedding network replaces the original MXNet model with a PyTorch ResNet50 backbone
-fine-tuned with triplet loss, which requires significantly less training data thanks to
-ImageNet pretraining.
+CetaMatch combines two open-source efforts:
+
+- **Image processing pipeline** — a faithful Python port of
+  [haimeh/finFindR](https://github.com/haimeh/finFindR) (originally R/C++):
+  preprocessing, blob detection, Canny edge detection, and A\* trailing-edge tracing.
+- **Embedding model** — EfficientNet-B7 fine-tuned with Sub-center ArcFace loss from
+  the [Happywhale Kaggle competition](https://www.kaggle.com/competitions/happy-whale-and-dolphin),
+  trained on 15 587 individual cetacean identities across 30 species.
 
 ---
 
@@ -32,7 +31,7 @@ Photo upload (JPEG/PNG)
   A* trace            Weighted pathfinding along the trailing edge  (port of astar.cpp)
         │
         ▼
-  Embedding           ResNet50 → 512-D L2-normalised vector
+  Embedding           EfficientNet-B7 → 2560-D L2-normalised vector
         │
         ▼
   Catalogue match     pgvector similarity search (Supabase)
@@ -45,7 +44,7 @@ Photo upload (JPEG/PNG)
 
 ## Prerequisites
 
-- Python 3.10+ (for local development and training)
+- Python 3.11 (for local development)
 - Docker (for containerised deployment)
 - [Supabase](https://supabase.com) project (free tier works)
 - [Fly.io](https://fly.io) account (optional — for cloud deployment)
@@ -64,7 +63,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE fins (
     id          TEXT PRIMARY KEY,
     label       TEXT NOT NULL,
-    embedding   vector(512) NOT NULL,
+    embedding   vector(2560) NOT NULL,
     image_path  TEXT,
     added_at    TIMESTAMPTZ DEFAULT NOW()
 );
@@ -79,7 +78,7 @@ ALTER TABLE fins ENABLE ROW LEVEL SECURITY;
 
 -- 5. Similarity search function
 CREATE OR REPLACE FUNCTION match_fins(
-    query_embedding vector(512),
+    query_embedding vector(2560),
     match_count     int DEFAULT 10
 )
 RETURNS TABLE (id text, label text, distance float)
@@ -93,9 +92,6 @@ AS $$
 $$;
 ```
 
-Then create a **Storage bucket** named `finfinder` (private) to hold your model
-weights file.
-
 ---
 
 ## Environment variables
@@ -106,8 +102,6 @@ Copy `.env.example` to `.env` and fill in your values:
 |----------|-------------|
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (Project Settings → API) |
-| `MODEL_PATH` | Local path for model weights (default: `/app/models/fin_embedder.pt`) |
-| `SUPABASE_STORAGE_BUCKET` | Storage bucket name (default: `finfinder`) |
 | `API_KEY` | Key required on all API requests — leave unset to disable auth |
 
 ---
@@ -117,10 +111,14 @@ Copy `.env.example` to `.env` and fill in your values:
 ```bash
 git clone https://github.com/your-org/finfinder.git
 cd finfinder
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # fill in your Supabase credentials
 uvicorn app.main:app --reload
 ```
+
+On first startup the EfficientNet-B7 competition weights (~459 MB) are downloaded
+from HuggingFace automatically and cached in `./models/`.
 
 API docs will be available at `http://localhost:8000/docs`.
 
@@ -167,79 +165,20 @@ curl -X POST http://localhost:8000/catalogue/add \
 
 ---
 
-## Pre-trained model weights
+## Embedding model
 
-Pre-trained weights are available on request. They were trained on a small catalogue
-of bottlenose dolphins from [The Dolphin Project](https://www.dolphinproject.com)
-using roughly 150 individuals with 2 dorsal fin photos each. The file is too large
-for GitHub — once obtained, upload it to your Supabase Storage bucket at
-`finfinder/models/fin_embedder.pt` and the app will download it automatically on
-startup.
+CetaMatch uses the **EfficientNet-B7 + Sub-center ArcFace** model from the
+[Happywhale Kaggle competition](https://www.kaggle.com/competitions/happy-whale-and-dolphin),
+trained by [yellowdolphin](https://huggingface.co/yellowdolphin/happywhale-models)
+on 15 587 individual cetacean identities across 30 species.
 
-**These weights will likely underperform on other populations or species.** The
-pretrained ResNet50 backbone still provides useful features out of the box, but for
-best results you should train the model on your own labelled catalogue.
+Weights are downloaded automatically from HuggingFace on first run and cached
+locally. The Docker image bakes them in at build time so cold starts need no
+network access.
 
----
-
-## Training your own model
-
-### 1. Prepare your data
-
-Organise your photos into one folder per individual, using the individual's ID as the
-folder name. You need **at least 2 photos per individual** — 3–10 is ideal.
-
-```
-training_data/
-  dolphin_001/
-    left_dorsal.jpg
-    right_dorsal.jpg
-  dolphin_002/
-    photo1.jpg
-    photo2.jpg
-    photo3.jpg
-```
-
-### 2. Train locally
-
-Train on your local machine first — it's faster to iterate than rebuilding a container.
-
-```bash
-python -m app.training.train \
-  --data-dir ./training_data \
-  --output ./models/fin_embedder.pt \
-  --epochs 50
-```
-
-Watch the output each epoch:
-
-```
-Epoch  1/50  train=0.2841  val=0.3102
-Epoch  2/50  train=0.2213  val=0.2891
-  → Saved best model to ./models/fin_embedder.pt
-```
-
-- **`train` loss** — error on photos the model is learning from. Should decrease.
-- **`val` loss** — error on held-out photos. This is your honest quality measure.
-- A val loss in the **0.05–0.20** range indicates a well-trained model.
-- The best checkpoint is saved to `--output` whenever val loss hits a new low.
-
-Additional options:
-
-```
---epochs      Number of training epochs (default: 50)
---batch-size  Batch size (default: 32; reduce if you run out of memory)
---lr          Learning rate (default: 1e-4)
---val-split   Fraction of data held out for validation (default: 0.15)
-```
-
-### 3. Upload weights to Supabase Storage
-
-Once you are satisfied with training, upload your `fin_embedder.pt` to the
-`finfinder` Supabase Storage bucket at path `models/fin_embedder.pt`.
-
-The running app will download the weights automatically on its next cold start if
-the local file is not present.
+> **Note:** The model performs well across cetacean species out of the box.
+> Accuracy will vary by photo quality and species. Fine-tuning is not currently
+> supported.
 
 ---
 
@@ -263,9 +202,9 @@ flyctl secrets set \
 flyctl deploy
 ```
 
-The included `fly.toml` configures 1 GB of RAM (required for PyTorch) and a
-60-second startup grace period so the health check doesn't fire before the model
-has finished loading.
+The included `fly.toml` configures 2 GB of RAM (required for EfficientNet-B7 +
+TensorFlow) and a 60-second startup grace period so the health check doesn't fire
+before the model has finished loading.
 
 For subsequent updates, `flyctl deploy` is all you need.
 
@@ -280,16 +219,19 @@ response, the Python version, and whether you are running locally or via Docker.
 
 ## Citation
 
-If you use finFindR in published research, please cite both this port and the
-original work:
+If you use CetaMatch in published research, please cite both this port and the
+original works:
 
 ```
-Craig, S. (2026). finFindR Python port. GitHub.
-https://github.com/The-Dolphin-Project/finfinderWeb
+Craig, S. (2026). CetaMatch. GitHub.
+https://github.com/The-Dolphin-Project/CetaMatch
 
 Haimeh, A. et al. finFindR: Automated identification of individual cetaceans
 from dorsal fin photographs. GitHub.
 https://github.com/haimeh/finFindR
+
+Happywhale and Dolphin Identification. Kaggle competition, 2022.
+https://www.kaggle.com/competitions/happy-whale-and-dolphin
 ```
 
 ---
@@ -297,9 +239,13 @@ https://github.com/haimeh/finFindR
 ## Acknowledgments
 
 - **[haimeh/finFindR](https://github.com/haimeh/finFindR)** — the original R/C++
-  implementation that this project ports.
-- **[The Dolphin Project](https://www.thedolphinproject.org)** — provided the training
-  catalogue of bottlenose dolphin dorsal fin photographs included with this release.
+  image processing pipeline that this project ports.
+- **[yellowdolphin](https://huggingface.co/yellowdolphin/happywhale-models)** — the
+  Happywhale competition EfficientNet-B7 + Sub-center ArcFace weights used for embedding.
+- **[Happywhale & Dolphin Kaggle competition](https://www.kaggle.com/competitions/happy-whale-and-dolphin)** —
+  the dataset and competition that produced the embedding model.
+- **[The Dolphin Project](https://www.thedolphinproject.org)** — operates the catalogue
+  that this API was built to serve.
 
 ---
 

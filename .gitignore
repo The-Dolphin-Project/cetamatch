@@ -7,8 +7,9 @@
 # .env.example is safe to commit — it contains no real secrets
 
 
-# Model weights — too large for GitHub; stored in Supabase Storage instead
+# Model weights — too large for GitHub; downloaded from HuggingFace at runtime
 models/*.pt
+models/*.h5
 
 # Training data photos — large dataset, not for public repo
 training_data/
@@ -29,6 +30,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv/
+.python-version
 
 # macOS
 .DS_Store

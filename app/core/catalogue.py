@@ -1,6 +1,9 @@
 """
 Fin catalogue — Supabase-backed storage with pgvector nearest-neighbour matching.
 
+Embedding model: EfficientNet-B7 pretrained on ImageNet (via tf.keras.applications).
+Backbone output after global average pooling: 2560-D, L2-normalised.
+
 Requires the following Supabase setup (run once in the SQL editor):
 
     -- 1. Extension
@@ -10,7 +13,7 @@ Requires the following Supabase setup (run once in the SQL editor):
     CREATE TABLE fins (
         id          TEXT PRIMARY KEY,
         label       TEXT NOT NULL,
-        embedding   vector(512) NOT NULL,
+        embedding   vector(2560) NOT NULL,
         image_path  TEXT,
         added_at    TIMESTAMPTZ DEFAULT NOW()
     );
@@ -28,7 +31,7 @@ Requires the following Supabase setup (run once in the SQL editor):
     -- 5. Similarity search function.
     --    SECURITY INVOKER means it runs as the calling role, so RLS is respected.
     CREATE OR REPLACE FUNCTION match_fins(
-        query_embedding vector(512),
+        query_embedding vector(2560),
         match_count     int DEFAULT 10
     )
     RETURNS TABLE (id text, label text, distance float)
@@ -40,6 +43,7 @@ Requires the following Supabase setup (run once in the SQL editor):
         ORDER  BY embedding <-> query_embedding
         LIMIT  match_count;
     $$;
+
 """
 
 from __future__ import annotations

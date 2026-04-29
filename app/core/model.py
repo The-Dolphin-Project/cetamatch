@@ -1,113 +1,139 @@
 """
-PyTorch triplet-loss embedding network.
+EfficientNet-B7 embedding network via TensorFlow/Keras.
 
-Architecture:
-  - ResNet50 backbone (ImageNet pretrained)
-  - Replace final FC layer with a projection head → 512-D L2-normalised embedding
-  - Trained with online hard triplet mining
+Weights: Happywhale Kaggle competition model (yellowdolphin/happywhale-models).
+Source:  https://huggingface.co/yellowdolphin/happywhale-models
+Code:    https://github.com/yellowdolphin/deeptrane (models_tf.py)
 
-The original finFindR used MXNet with a 4096-D embedding trained from scratch.
-This version uses a pretrained backbone for better data efficiency — important
-when starting from a small fin catalogue.
+Architecture (efnv1b7_colab216, inference mode):
+  - EfficientNet-B7 backbone  (Noisy Student pretrained, fine-tuned on cetaceans)
+  - GlobalAveragePooling2D    →  2560-D feature vector
+  - Dropout(0.2)              (identity at inference)
+  - L2 normalisation          →  unit embedding
+
+The h5 file is weights-only (saved with model.save_weights(), not model.save()).
+We rebuild the inference architecture using the efficientnet package — whose layer
+names match those in the saved file — then load with by_name=True.
 """
 
 from __future__ import annotations
 
 import os
+import urllib.request
 from pathlib import Path
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import models
-from torchvision.models import ResNet50_Weights
+import numpy as np
+import tensorflow as tf
 
-EMBEDDING_DIM = 512
-MODEL_PATH = Path(os.getenv("MODEL_PATH", "/app/models/fin_embedder.pt"))
-_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "finfinder")
-_STORAGE_OBJECT = "models/fin_embedder.pt"
+MODEL_PATH = Path(os.getenv("MODEL_PATH", "./models/efnv1b7_colab216.h5"))
+_MODEL_URL = (
+    "https://huggingface.co/yellowdolphin/happywhale-models"
+    "/resolve/main/efnv1b7_colab216.h5"
+)
+_IMAGE_SIZE = 600
 
+# Set after first load.
+EMBEDDING_DIM: int = 0
+
+_embedding_model: tf.keras.Model | None = None
+
+
+# ---------------------------------------------------------------------------
+# Download
+# ---------------------------------------------------------------------------
 
 def _download_model_if_needed() -> None:
-    """Download model weights from Supabase Storage if not present locally."""
+    """Stream the competition weights from HuggingFace if not on disk."""
     if MODEL_PATH.exists():
         return
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not supabase_url or not supabase_key:
-        print("[model] SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set — skipping download.")
-        return
-    print(f"[model] Downloading weights from Supabase Storage ({_STORAGE_BUCKET}/{_STORAGE_OBJECT}) …")
-    try:
-        from supabase import create_client
-        client = create_client(supabase_url, supabase_key)
-        data = client.storage.from_(_STORAGE_BUCKET).download(_STORAGE_OBJECT)
-        MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MODEL_PATH.write_bytes(data)
-        print(f"[model] Weights saved to {MODEL_PATH}")
-    except Exception as exc:
-        print(f"[model] Could not download weights: {exc}")
-        print("[model] Falling back to ImageNet pretrained backbone only.")
+
+    print(f"[model] Weights not found at {MODEL_PATH}")
+    print(f"[model] Downloading from HuggingFace (~459 MB) …")
+    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    def _report(block_num: int, block_size: int, total_size: int) -> None:
+        if total_size > 0 and block_num % 500 == 0:
+            pct = min(100, block_num * block_size * 100 // total_size)
+            mb  = block_num * block_size // 1_048_576
+            print(f"[model]   {pct}% ({mb} MB)", flush=True)
+
+    urllib.request.urlretrieve(_MODEL_URL, MODEL_PATH, reporthook=_report)
+    print(f"[model] Saved to {MODEL_PATH}")
 
 
-class FinEmbedder(nn.Module):
-    """ResNet50 backbone with a 512-D L2-normalised projection head."""
+# ---------------------------------------------------------------------------
+# Build + load
+# ---------------------------------------------------------------------------
 
-    def __init__(self, embedding_dim: int = EMBEDDING_DIM, pretrained: bool = True) -> None:
-        super().__init__()
-        weights = ResNet50_Weights.DEFAULT if pretrained else None
-        backbone = models.resnet50(weights=weights)
+def _build_and_load(weights_path: Path) -> tf.keras.Model:
+    """
+    Reconstruct the inference-mode architecture using the efficientnet package
+    (whose layer names match those in the h5 file), then load weights by name.
+    """
+    import efficientnet.tfkeras as efn  # noqa: F401  (registers custom objects)
 
-        # Remove the original classification head
-        in_features = backbone.fc.in_features
-        backbone.fc = nn.Identity()
-        self.backbone = backbone
+    # Build backbone with no pre-trained weights — we'll load from h5 instead.
+    backbone = efn.EfficientNetB7(
+        input_shape=(_IMAGE_SIZE, _IMAGE_SIZE, 3),
+        weights=None,
+        include_top=False,
+    )
 
-        # Projection head: 2048 → 1024 → embedding_dim
-        self.projector = nn.Sequential(
-            nn.Linear(in_features, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(1024, embedding_dim),
-        )
+    inp = backbone.input
+    x   = backbone.output
+    x   = tf.keras.layers.GlobalAveragePooling2D(name="avg_pool")(x)
+    x   = tf.keras.layers.Dropout(0.2, name="dropout")(x)
+    out = tf.keras.layers.Lambda(
+        lambda v: tf.math.l2_normalize(v, axis=1),
+        name="l2_normalize",
+    )(x)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = self.backbone(x)
-        embedding = self.projector(features)
-        return F.normalize(embedding, p=2, dim=1)  # L2-normalise
+    model = tf.keras.Model(inputs=inp, outputs=out)
 
+    # Load backbone + pooling weights; ArcFace / species head weights are skipped.
+    model.load_weights(str(weights_path), by_name=True, skip_mismatch=True)
+    print(f"[model] Competition weights loaded from {weights_path}")
 
-def load_model(device: str | torch.device = "cpu") -> FinEmbedder:
-    """Load model weights if they exist, otherwise return the pretrained backbone."""
-    _download_model_if_needed()
-    model = FinEmbedder(pretrained=True)
-    if MODEL_PATH.exists():
-        state = torch.load(MODEL_PATH, map_location=device, weights_only=True)
-        model.load_state_dict(state)
-        print(f"[model] Loaded weights from {MODEL_PATH}")
-    else:
-        print("[model] No saved weights found — using ImageNet pretrained backbone only.")
-        print(f"[model] Train the model and save to {MODEL_PATH}")
-    model.to(device)
-    model.eval()
     return model
 
 
-def embed_image_tensor(
-    model: FinEmbedder,
-    tensor: torch.Tensor,
-    device: str | torch.device = "cpu",
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def load_model() -> tf.keras.Model:
+    """Download weights if needed, build the embedding model, and cache it."""
+    global _embedding_model, EMBEDDING_DIM
+
+    if _embedding_model is not None:
+        return _embedding_model
+
+    _download_model_if_needed()
+
+    if not MODEL_PATH.exists():
+        raise RuntimeError(
+            f"Model weights not found at {MODEL_PATH}.\n"
+            "Set MODEL_PATH in .env to an existing file, or ensure network "
+            "access so the app can download from HuggingFace."
+        )
+
+    print(f"[model] Loading {MODEL_PATH} …")
+    _embedding_model = _build_and_load(MODEL_PATH)
+
+    EMBEDDING_DIM = int(_embedding_model.output_shape[-1])
+    print(f"[model] Ready.  embedding_dim={EMBEDDING_DIM}")
+
+    return _embedding_model
+
+
+def embed_image_array(
+    model: tf.keras.Model,
+    img_array: np.ndarray,
 ) -> list[float]:
     """
-    Run inference on a single preprocessed image tensor.
-
-    Args:
-        tensor: shape (1, 3, H, W), normalised to ImageNet stats
-    Returns:
-        embedding as a Python list of floats (length EMBEDDING_DIM)
+    Run inference on a pre-processed (1, 600, 600, 3) float32 array.
+    Returns an L2-normalised embedding as a Python list of floats.
     """
-    model.eval()
-    with torch.no_grad():
-        emb = model(tensor.to(device))
-    return emb.squeeze(0).cpu().tolist()
+    prediction = model(img_array, training=False).numpy()   # (1, 2560)
+    norm = np.linalg.norm(prediction, axis=1, keepdims=True)
+    return (prediction / np.maximum(norm, 1e-10))[0].tolist()

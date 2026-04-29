@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from ..core import catalogue, pipeline
-from ..dependencies import get_device, get_model, require_api_key
+from ..dependencies import get_model, require_api_key
 
 router = APIRouter()
 
@@ -33,12 +33,11 @@ async def identify(
     file: Annotated[UploadFile, File(description="Fin photograph (JPEG/PNG)")],
     top_n: int = 10,
     model=Depends(get_model),
-    device=Depends(get_device),
 ):
     """
     Process a fin photograph and return:
-      - the 512-D embedding hash
-      - the detected trace coordinates
+      - the embedding vector (hash)
+      - the detected trailing-edge trace coordinates
       - the top-N catalogue matches (empty if catalogue is unpopulated)
     """
     if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
@@ -48,7 +47,7 @@ async def identify(
     if len(image_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Image must be ≤ 20 MB")
 
-    result = pipeline.process_image(image_bytes, model, device)
+    result = pipeline.process_image(image_bytes, model)
     matches = catalogue.find_matches(result["hash"], top_n=top_n)
 
     return {
@@ -70,14 +69,13 @@ async def add_to_catalogue(
     label: Annotated[str, Form(description="Individual identifier / name")],
     fin_id: Annotated[str | None, Form(description="Optional stable ID (UUID generated if omitted)")] = None,
     model=Depends(get_model),
-    device=Depends(get_device),
 ):
     """Process a fin photo and add it to the catalogue under the given label."""
     if file.content_type not in ("image/jpeg", "image/png", "image/jpg"):
         raise HTTPException(status_code=415, detail="Only JPEG and PNG images are accepted")
 
     image_bytes = await file.read()
-    result = pipeline.process_image(image_bytes, model, device)
+    result = pipeline.process_image(image_bytes, model)
 
     entry_id = fin_id or str(uuid.uuid4())
     catalogue.add_fin(entry_id, label, result["hash"])
